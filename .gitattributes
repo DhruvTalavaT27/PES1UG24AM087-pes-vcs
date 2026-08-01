@@ -1,0 +1,6 @@
+# Normalize line endings; keep scripts and the Makefile as LF so they
+# work identically on Linux, WSL, and macOS.
+* text=auto
+
+*.sh text eol=lf
+Makefile text eol=lf

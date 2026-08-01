@@ -1,20 +1,15 @@
-# Compiled binaries
-pes
+# Build products
+strata
 test_objects
 test_tree
-
-# Object files
 *.o
-*.obsidian
 
-# PES repository (created during testing)
-.pes/
+# Repository metadata created during testing
+.strata/
 
-# Editor files
+# Editor droppings
 *.swp
 *.swo
 *~
 .vscode/
 .idea/
-
-

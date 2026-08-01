@@ -1,22 +1,28 @@
-// index.h — Staging area (index) interface
-//
-// The index is a text file (.pes/index) that tracks which files are
-// staged for the next commit. It maps file paths to their blob hashes
-// and stores metadata for fast change detection.
+/*
+ * index.h — Staging area (index) interface.
+ *
+ * The index is the set of files staged for the next commit. It is stored
+ * as a plain text file, one entry per line:
+ *
+ *     <mode-octal> <64-hex-hash> <mtime-seconds> <size> <path>
+ *
+ * A text format is a deliberate choice: it is trivially debuggable, and
+ * for a single-user tool the parse cost is irrelevant.
+ */
 
 #ifndef INDEX_H
 #define INDEX_H
 
-#include "pes.h"
+#include "strata.h"
 
 #define MAX_INDEX_ENTRIES 10000
 
 typedef struct {
-    uint32_t mode;          // File mode (100644, 100755, etc.)
-    ObjectID hash;          // SHA-256 of the staged blob
-    uint64_t mtime_sec;     // Last modification time (seconds since epoch)
-    uint32_t size;          // File size in bytes at time of staging
-    char path[512];         // Relative path from repo root (e.g., "src/main.c")
+    uint32_t mode;        /* 0100644 or 0100755 */
+    ObjectID hash;        /* blob hash of the staged content */
+    uint64_t mtime_sec;   /* file mtime when staged, for fast change detection */
+    uint32_t size;        /* file size when staged */
+    char path[512];       /* repo-relative path, e.g. "src/main.c" */
 } IndexEntry;
 
 typedef struct {
@@ -24,33 +30,19 @@ typedef struct {
     int count;
 } Index;
 
-// Load the index from .pes/index into memory.
-// If the file does not exist (no files staged yet), initializes an empty index.
+/* Load the index. A missing file just means nothing is staged (not an error). */
 int index_load(Index *index);
 
-// Save the index to .pes/index using atomic write (temp file + rename).
+/* Persist the index atomically (temp file + fsync + rename). */
 int index_save(const Index *index);
 
-// Stage a file: read its contents, write as a blob, update/add index entry.
+/* Stage a file: store its contents as a blob and record an entry. */
 int index_add(Index *index, const char *path);
 
-// Remove a file from the index (unstage it).
+/* Unstage a file. Returns 0, or -1 if it wasn't staged. */
 int index_remove(Index *index, const char *path);
 
-// Find an entry by path. Returns pointer to the entry, or NULL if not found.
-IndexEntry* index_find(Index *index, const char *path);
+/* Find a staged entry by path, or NULL. */
+IndexEntry *index_find(Index *index, const char *path);
 
-// Print the status of the working directory compared to the index and HEAD.
-// Output format:
-//   Staged changes:
-//     staged:     <path>
-//
-//   Unstaged changes:
-//     modified:   <path>
-//     deleted:    <path>
-//
-//   Untracked files:
-//     untracked:  <path>
-int index_status(const Index *index);
-
-#endif // INDEX_H
+#endif /* INDEX_H */

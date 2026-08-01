@@ -1,80 +1,101 @@
 #!/usr/bin/env bash
 #
-# test_sequence.sh — End-to-end integration test for PES-VCS
+# test_sequence.sh — End-to-end integration test.
 #
-# Run from the repository root after compiling:
-#   make
-#   ./test_sequence.sh
+# Runs the full lifecycle — init, add, status, commit, rm, log — in a
+# throwaway directory and asserts on the observable behavior of each
+# command, including object-store deduplication.
+#
+# Run from the repository root after building:
+#   make test-integration
 
 set -euo pipefail
 
-PES="$(cd "$(dirname "$0")" && pwd)/pes"
-TEST_DIR="$(mktemp -d)"
+BIN="$(cd -- "$(dirname -- "$0")" && pwd)/strata"
+WORK="$(mktemp -d)"
 
 cleanup() {
-    rm -rf "$TEST_DIR"
+    rm -rf "$WORK"
 }
 trap cleanup EXIT
 
-cd "$TEST_DIR"
+cd "$WORK"
 
-echo "=== PES-VCS Integration Test ==="
+pass() { echo "PASS  $1"; }
+fail() { echo "FAIL  $1" >&2; exit 1; }
+
+expect_contains() {
+    local haystack="$1" needle="$2" label="$3"
+    case "$haystack" in
+        *"$needle"*) pass "$label" ;;
+        *) fail "$label (missing: $needle)" ;;
+    esac
+}
+
+echo "=== strata end-to-end tests ==="
 echo ""
 
-# ── Init ───────────────────────────────────────────────────────────────────
-echo "--- Repository Initialization ---"
-$PES init
-[ -d .pes/objects ] && echo "PASS: .pes/objects exists" || echo "FAIL: .pes/objects missing"
-[ -d .pes/refs/heads ] && echo "PASS: .pes/refs/heads exists" || echo "FAIL: .pes/refs/heads missing"
-[ -f .pes/HEAD ] && echo "PASS: .pes/HEAD exists" || echo "FAIL: .pes/HEAD missing"
+# ── init ─────────────────────────────────────────────────────────────────────
+"$BIN" init
+[ -d .strata/objects ]    && pass ".strata/objects exists"    || fail ".strata/objects missing"
+[ -d .strata/refs/heads ] && pass ".strata/refs/heads exists" || fail ".strata/refs/heads missing"
+[ -f .strata/HEAD ]       && pass ".strata/HEAD exists"       || fail ".strata/HEAD missing"
 echo ""
 
-# ── Add and Status ─────────────────────────────────────────────────────────
-echo "--- Staging Files ---"
+# ── staging and status ───────────────────────────────────────────────────────
 echo "version 1" > file.txt
 echo "hello world" > hello.txt
-$PES add file.txt hello.txt
-echo "Status after add:"
-$PES status
+"$BIN" add file.txt hello.txt
+
+out="$("$BIN" status)"
+expect_contains "$out" "On branch main"            "status names the current branch"
+expect_contains "$out" "new file:   file.txt"      "status lists staged file.txt"
+expect_contains "$out" "new file:   hello.txt"     "status lists staged hello.txt"
 echo ""
 
-# ── First Commit ───────────────────────────────────────────────────────────
-echo "--- First Commit ---"
-$PES commit -m "Initial commit"
-echo ""
-echo "Log after first commit:"
-$PES log
+# ── first commit ─────────────────────────────────────────────────────────────
+"$BIN" commit -m "Initial commit"
+out="$("$BIN" status)"
+expect_contains "$out" "working tree clean"        "status clean after commit"
+expect_contains "$("$BIN" log)" "Initial commit"   "log shows the first commit"
 echo ""
 
-# ── Modify and Recommit ───────────────────────────────────────────────────
-echo "--- Second Commit ---"
+# ── modify without staging ───────────────────────────────────────────────────
 echo "version 2" >> file.txt
-$PES add file.txt
-$PES commit -m "Update file.txt"
+out="$("$BIN" status)"
+expect_contains "$out" "modified:   file.txt"      "status flags unstaged modification"
+"$BIN" add file.txt
+out="$("$BIN" status)"
+expect_contains "$out" "Changes to be committed"   "staged modification listed for commit"
+"$BIN" commit -m "Update file.txt"
+expect_contains "$("$BIN" log)" "Update file.txt"  "log shows the second commit"
 echo ""
 
-# ── Third Commit ──────────────────────────────────────────────────────────
-echo "--- Third Commit ---"
+# ── unstage with rm ──────────────────────────────────────────────────────────
 echo "goodbye" > bye.txt
-$PES add bye.txt
-$PES commit -m "Add farewell"
+"$BIN" add bye.txt
+"$BIN" rm bye.txt
+out="$("$BIN" status)"
+expect_contains "$out" "Untracked files"           "rm returns a file to untracked"
+"$BIN" add bye.txt
+"$BIN" commit -m "Add farewell"
 echo ""
 
-echo "--- Full History ---"
-$PES log
+# ── history and refs ─────────────────────────────────────────────────────────
+out="$("$BIN" log)"
+expect_contains "$out" "Add farewell"              "log shows the third commit"
+expect_contains "$out" "HEAD -> main"              "log marks the current branch"
+
+grep -q "ref: refs/heads/main" .strata/HEAD && pass "HEAD points at refs/heads/main" || fail "HEAD not a symbolic ref"
+[ -s .strata/refs/heads/main ] && pass "branch ref holds a commit hash" || fail "branch ref empty"
 echo ""
 
-echo "--- Reference Chain ---"
-echo "HEAD:"
-cat .pes/HEAD
-echo "refs/heads/main:"
-cat .pes/refs/heads/main
-echo ""
+# ── deduplication ────────────────────────────────────────────────────────────
+# 3 commits over 4 distinct file versions must yield exactly:
+#   4 blobs + 3 trees + 3 commits = 10 objects
+objects=$(find .strata/objects -type f | wc -l)
+[ "$objects" -eq 10 ] && pass "object store deduplicates (10 objects for 3 commits)" \
+                        || fail "expected 10 objects, found $objects"
 
-echo "--- Object Store ---"
-echo "Objects created:"
-find .pes/objects -type f | wc -l
-find .pes/objects -type f | sort
 echo ""
-
-echo "=== All integration tests completed ==="
+echo "=== all end-to-end tests passed ==="

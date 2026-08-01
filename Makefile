@@ -1,16 +1,17 @@
-CC = gcc
-CFLAGS = -Wall -Wextra -O2
+CC      = gcc
+CFLAGS  = -Wall -Wextra -O2
 LDFLAGS = -lcrypto
 
 # ─── Main binary ─────────────────────────────────────────────────────────────
 
-SRCS = object.c tree.c index.c commit.c pes.c
+SRCS = object.c tree.c index.c commit.c status.c strata.c
 OBJS = $(SRCS:.c=.o)
+DEPS = strata.h index.h tree.h commit.h status.h
 
-pes: $(OBJS)
+strata: $(OBJS)
 	$(CC) -o $@ $^ $(LDFLAGS)
 
-%.o: %.c pes.h
+%.o: %.c $(DEPS)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # ─── Test binaries ───────────────────────────────────────────────────────────
@@ -18,28 +19,28 @@ pes: $(OBJS)
 test_objects: test_objects.o object.o
 	$(CC) -o $@ $^ $(LDFLAGS)
 
-test_tree: test_tree.o object.o tree.o
+test_tree: test_tree.o object.o tree.o index.o
 	$(CC) -o $@ $^ $(LDFLAGS)
 
-# ─── Convenience targets ────────────────────────────────────────────────────
+# ─── Convenience targets ─────────────────────────────────────────────────────
 
 .PHONY: all clean test test-unit test-integration
 
-all: pes test_objects test_tree
+all: strata test_objects test_tree
 
 clean:
-	rm -f pes test_objects test_tree $(OBJS) test_objects.o test_tree.o
-	rm -rf .pes
+	rm -f strata test_objects test_tree $(OBJS) test_objects.o test_tree.o
+	rm -rf .strata
 
 test: test-unit test-integration
 
 test-unit: test_objects test_tree
-	@echo "=== Running Phase 1 tests ==="
+	@echo "=== Object store tests ==="
 	./test_objects
 	@echo ""
-	@echo "=== Running Phase 2 tests ==="
+	@echo "=== Tree tests ==="
 	./test_tree
 
-test-integration: pes
-	@echo "=== Running integration tests ==="
+test-integration: strata
+	@echo "=== End-to-end tests ==="
 	bash test_sequence.sh

@@ -1,97 +1,122 @@
-// test_objects.c — Phase 1 test program
-//
-// Compile and run:
-//   gcc -Wall -Wextra -O2 -o test_objects test_objects.c object.c -lcrypto
-//   ./test_objects
+/*
+ * test_objects.c — Unit tests for the object store.
+ *
+ * Build: make test_objects
+ * Run:   ./test_objects
+ */
 
-#include "pes.h"
+#include "strata.h"
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
 #include <stdlib.h>
 
-// Forward declarations for object.c functions
-int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out);
-int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_t *len_out);
-int object_exists(const ObjectID *id);
-void object_path(const ObjectID *id, char *path_out, size_t path_size);
-
-void test_blob_storage(void) {
-    const char *content = "Hello, PES-VCS!\n";
+static void test_blob_storage(void) {
+    const char *content = "Hello, strata!\n";
     ObjectID id;
 
-    int rc = object_write(OBJ_BLOB, content, strlen(content), &id);
-    assert(rc == 0);
+    assert(object_write(OBJ_BLOB, content, strlen(content), &id) == 0);
 
     char hex[HASH_HEX_SIZE + 1];
     hash_to_hex(&id, hex);
-    printf("Stored blob with hash: %s\n", hex);
+    printf("stored blob  %s\n", hex);
 
     char path[512];
     object_path(&id, path, sizeof(path));
-    printf("Object stored at: %s\n", path);
+    printf("    at      %s\n", path);
 
-    // Read it back and verify
     ObjectType type;
     void *data;
     size_t len;
-    rc = object_read(&id, &type, &data, &len);
-    assert(rc == 0);
+    assert(object_read(&id, &type, &data, &len) == 0);
     assert(type == OBJ_BLOB);
     assert(len == strlen(content));
     assert(memcmp(data, content, len) == 0);
     free(data);
 
-    printf("PASS: blob storage\n");
+    printf("PASS  blob roundtrip\n");
 }
 
-void test_deduplication(void) {
-    const char *content = "Duplicate content\n";
+static void test_deduplication(void) {
+    const char *content = "duplicate content\n";
     ObjectID id1, id2;
 
-    object_write(OBJ_BLOB, content, strlen(content), &id1);
-    object_write(OBJ_BLOB, content, strlen(content), &id2);
+    assert(object_write(OBJ_BLOB, content, strlen(content), &id1) == 0);
+    assert(object_write(OBJ_BLOB, content, strlen(content), &id2) == 0);
 
     assert(memcmp(&id1, &id2, sizeof(ObjectID)) == 0);
+    assert(object_exists(&id1));
 
-    printf("PASS: deduplication\n");
+    /* Writing the same content twice must not create a second file. */
+    char path[512];
+    object_path(&id1, path, sizeof(path));
+    FILE *f = fopen(path, "rb");
+    assert(f != NULL);
+    fclose(f);
+
+    printf("PASS  deduplication (identical content, one object)\n");
 }
 
-void test_integrity(void) {
-    const char *content = "Test integrity\n";
+static void test_integrity_check(void) {
+    const char *content = "integrity is not optional\n";
     ObjectID id;
-    object_write(OBJ_BLOB, content, strlen(content), &id);
+    assert(object_write(OBJ_BLOB, content, strlen(content), &id) == 0);
 
-    // Corrupt the stored file
+    /* Flip one byte in the stored file; the read must now fail. */
     char path[512];
     object_path(&id, path, sizeof(path));
-
     FILE *f = fopen(path, "r+b");
     assert(f != NULL);
     fseek(f, 20, SEEK_SET);
     fputc('X', f);
     fclose(f);
 
-    // Read should detect corruption
     ObjectType type;
     void *data;
     size_t len;
-    int rc = object_read(&id, &type, &data, &len);
-    assert(rc == -1);  // Must fail integrity check
+    assert(object_read(&id, &type, &data, &len) == -1);
 
-    printf("PASS: integrity check\n");
+    printf("PASS  corruption detected on read\n");
+}
+
+static void test_empty_blob(void) {
+    ObjectID id;
+    assert(object_write(OBJ_BLOB, "", 0, &id) == 0);
+
+    ObjectType type;
+    void *data;
+    size_t len;
+    assert(object_read(&id, &type, &data, &len) == 0);
+    assert(type == OBJ_BLOB);
+    assert(len == 0);
+    free(data);   /* free(NULL) is fine */
+
+    printf("PASS  empty blob roundtrip\n");
+}
+
+static void test_missing_object(void) {
+    ObjectID id;
+    memset(&id, 0xAB, sizeof(id));
+
+    ObjectType type;
+    void *data;
+    size_t len;
+    assert(object_read(&id, &type, &data, &len) == -1);
+
+    printf("PASS  missing object reported as error\n");
 }
 
 int main(void) {
-    // Clean slate
     int rc __attribute__((unused));
-    rc = system("rm -rf .pes");
-    rc = system("mkdir -p .pes/objects .pes/refs/heads");
+    rc = system("rm -rf .strata");
+    rc = system("mkdir -p .strata/objects .strata/refs/heads");
 
     test_blob_storage();
     test_deduplication();
-    test_integrity();
+    test_integrity_check();
+    test_empty_blob();
+    test_missing_object();
 
-    printf("\nAll Phase 1 tests passed.\n");
+    printf("\nAll object store tests passed.\n");
     return 0;
 }
